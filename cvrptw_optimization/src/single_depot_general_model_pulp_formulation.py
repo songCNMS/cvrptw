@@ -44,15 +44,15 @@ class ModelFormulation:
         :param bigm:
         :return:
         '''
-        self.time_var = pulp.LpVariable.dicts("Time", self.time_variables_dict.keys(), 0, None, pulp.LpContinuous)
-        self.assignment_var = pulp.LpVariable.dicts("Assign", self.assignment_variables_dict.keys(), 0, 1,
-                                                    pulp.LpBinary)  # Binary
+        self.time_var = LpVariable.dicts("Time", self.time_variables_dict.keys(), 0, None, LpContinuous)
+        self.assignment_var = LpVariable.dicts("Assign", self.assignment_variables_dict.keys(), 0, 1,
+                                                    LpBinary)  # Binary
 
-        self.model = pulp.LpProblem("CVRPTW", pulp.LpMinimize)
+        self.model = LpProblem("CVRPTW", LpMinimize)
 
         # objective function
         print('objective function')
-        self.model += pulp.lpSum(
+        self.model += lpSum(
             self.transit_dict['TRANSPORTATION_COST'][from_loc, to_loc] * self.assignment_var[from_loc, to_loc, vehicle]
             for
             from_loc, to_loc, vehicle in self.assignment_variables_dict.keys())
@@ -65,7 +65,7 @@ class ModelFormulation:
                 if from_loc == customer:
                     outgoing_arcs.append(to_loc)
 
-            self.model += pulp.lpSum(
+            self.model += lpSum(
                 [self.assignment_var[customer, to_loc, vehicle] for to_loc in outgoing_arcs for vehicle in
                  self.vehicles_dict['CAPACITY'].keys()]) == 1, "customerVisit" + str(
                 customer) + 'k'
@@ -74,7 +74,7 @@ class ModelFormulation:
         print('Each vehicle should leave from a depot')
         depot_leave = self.depot_name + '_LEAVE'
         for vehicle in self.vehicles_dict['CAPACITY'].keys():
-            self.model += pulp.lpSum([self.assignment_var[depot_leave, customer, vehicle]
+            self.model += lpSum([self.assignment_var[depot_leave, customer, vehicle]
                                       for customer in
                                       self.customers_dict['DEMAND'].keys()]) == 1, "entryDepotConnection" + str(
                 vehicle)
@@ -82,26 +82,32 @@ class ModelFormulation:
         # Flow in Flow Out
         print('Flow in Flow out')
         for customer in self.customers_dict['DEMAND'].keys():
+            _incoming_arcs = list(self.customers_dict['DEMAND'].keys())
+            _outgoing_arcs = list(self.customers_dict['DEMAND'].keys())
+            _incoming_arcs.remove(customer)
+            _outgoing_arcs.remove(customer)
             for vehicle in self.vehicles_dict['CAPACITY'].keys():
-                incoming_arcs = []
-                outgoing_arcs = []
+                # incoming_arcs = []
+                # outgoing_arcs = []
+                # for from_loc, to_loc, temp_vehicle in self.assignment_variables_dict.keys():
+                #     if (to_loc == customer) & (temp_vehicle == vehicle):
+                #         incoming_arcs.append(from_loc)
+                #     if (from_loc == customer) & (temp_vehicle == vehicle):
+                #         outgoing_arcs.append(to_loc)
+                
+                # print(incoming_arcs)
+                # print(outgoing_arcs)
 
-                for from_loc, to_loc, temp_vehicle in self.assignment_variables_dict.keys():
-                    if (to_loc == customer) & (temp_vehicle == vehicle):
-                        incoming_arcs.append(from_loc)
-                    if (from_loc == customer) & (temp_vehicle == vehicle):
-                        outgoing_arcs.append(to_loc)
-
-                self.model += pulp.lpSum(
-                    [self.assignment_var[from_loc, customer, vehicle] for from_loc in incoming_arcs]) - pulp.lpSum(
-                    [self.assignment_var[customer, to_loc, vehicle] for to_loc in outgoing_arcs]) == 0, "forTrip" + str(
+                self.model += lpSum(
+                    [self.assignment_var[from_loc, customer, vehicle] for from_loc in _incoming_arcs]) - lpSum(
+                    [self.assignment_var[customer, to_loc, vehicle] for to_loc in _outgoing_arcs]) == 0, "forTrip" + str(
                     customer) + 'k' + str(vehicle)
 
         # Each vehicle should enter a depot
         print('Each vehicle should enter a depot')
         depot_enter = self.depot_name + '_ENTER'
         for vehicle in self.vehicles_dict['CAPACITY'].keys():
-            self.model += pulp.lpSum([self.assignment_var[customer, depot_enter, vehicle]
+            self.model += lpSum([self.assignment_var[customer, depot_enter, vehicle]
                                       for customer in
                                       self.customers_dict['DEMAND'].keys()]) == 1, "exitDepotConnection" + str(
                 vehicle)
@@ -109,7 +115,7 @@ class ModelFormulation:
         # vehicle Capacity
         print('vehicle Capacity')
         for vehicle in self.vehicles_dict['CAPACITY'].keys():
-            self.model += pulp.lpSum(
+            self.model += lpSum(
                 [float(self.customers_dict['DEMAND'][from_loc]) * self.assignment_var[from_loc, to_loc, vehicle]
                  for from_loc, to_loc in
                  self.transit_starting_customers_dict['DRIVE_MINUTES'].keys()]) <= float(
@@ -147,13 +153,17 @@ class ModelFormulation:
         :return:
         '''
 
-        print('solving model')
+        print('solving model %s' % solver_type)
         if solver_type == 'PULP_CBC_CMD':
             self.model.solve(PULP_CBC_CMD(
                 msg=enable_solution_messaging,
-                maxSeconds=60 * solver_time_limit_minutes,
-                fracGap=mip_gap)
+                timeLimit=60 * solver_time_limit_minutes,
+                gapRel=mip_gap)
             )
+        elif solver_type == "GUROBI_CMD":
+            solver = getSolver('GUROBI_CMD', msg=enable_solution_messaging,
+                timeLimit=60 * solver_time_limit_minutes)
+            self.model.solve(solver)
 
     def get_model_solution(self):
         '''

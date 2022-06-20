@@ -11,17 +11,23 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), 'cvrptw_
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), 'cvrptw_optimization/data')))
 from cvrptw_optimization.data import data as dat
 
-depots = dat.depots_unit_test
-customers = dat.customers_unit_test
-transportation_matrix = dat.transportation_matrix_unit_test
-vehicles = dat.vehicles_unit_test.head(2)
+# depots = dat.depots_unit_test
+# customers = dat.customers_unit_test
+# transportation_matrix = dat.transportation_matrix_unit_test
+# vehicles = dat.vehicles_unit_test.head(2)
 
-'''
+
 depots = dat.depots1
 customers = dat.customers1
 transportation_matrix = dat.transportation_matrix1
 vehicles = dat.vehicles1.head(15)
-'''
+
+
+
+print("depots:", depots)
+print("customers: ", customers)
+print("transportation_matrix: ", transportation_matrix)
+print("vehicles: ", vehicles)
 
 
 class SingleDepotTest(unittest.TestCase):
@@ -51,7 +57,7 @@ class SingleDepotTest(unittest.TestCase):
         model.formulate_problem()
 
         print('Solving the model')
-        model.solve_model()
+        model.solve_model(solver_type="GUROBI_CMD")
 
         print('Getting model results')
         model.get_model_solution()

@@ -89,7 +89,7 @@ def run_single_depot_column_generation(depots,
                                        capacity,
                                        mip_gap=0.001,
                                        solver_time_limit_minutes=10,
-                                       enable_solution_messaging=0,
+                                       enable_solution_messaging=1,
                                        solver_type='PULP_CBC_CMD',
                                        max_iteration=50):
 
@@ -145,6 +145,7 @@ def run_single_depot_column_generation(depots,
         # solve sub-problem
         print('Solving sub-problem')
         path_name = 'PATH ' + str(len(paths_dict))
+        print(paths_dict)
         model_name = str(iteration) + 'SUBP'
         solution_objective, solution_path, sub_model = model_formulation.formulate_and_solve_subproblem(price,
                                                                                                         capacity,
@@ -168,6 +169,7 @@ def run_single_depot_column_generation(depots,
             break
         else:
             paths_dict[path_name] = solution_path['LOCATION_NAME'].tolist()
+            print(solution_path['LOCATION_NAME'].tolist())
 
         iteration += 1
 

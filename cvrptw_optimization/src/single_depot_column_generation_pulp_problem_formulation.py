@@ -3,6 +3,7 @@ CVRPTW master and sub formulation
 '''
 from pulp import *
 import pandas as pd
+import numpy as np
 
 
 class ColumnGenerationFormulation:
@@ -52,22 +53,22 @@ class ColumnGenerationFormulation:
         :return:
         '''
 
-        master_model = pulp.LpProblem("MA_CVRPTW", pulp.LpMinimize)
+        master_model = LpProblem("MA_CVRPTW", LpMinimize)
         if binary_model:
-            path_var = pulp.LpVariable.dicts("Path", paths_dict.keys(), 0, 1, pulp.LpBinary)
+            path_var = LpVariable.dicts("Path", paths_dict.keys(), 0, 1, LpBinary)
         else:
-            path_var = pulp.LpVariable.dicts("Path", paths_dict.keys(), 0, 1, pulp.LpContinuous)
+            path_var = LpVariable.dicts("Path", paths_dict.keys(), 0, 1, LpContinuous)
         print('Master model objective function')
-        master_model += pulp.lpSum(paths_cost_dict[path] * path_var[path] for path in paths_dict.keys())
+        master_model += lpSum(paths_cost_dict[path] * path_var[path] for path in paths_dict.keys())
 
         print('Each customer belongs to one path')
         for customer in self.customers_dict['DEMAND'].keys():
-            master_model += pulp.lpSum(
+            master_model += lpSum(
                 [paths_customers_dict[path, customer] * path_var[path] for path in
                  paths_dict.keys()]) == 1, "Customer" + str(customer)
 
         if number_of_paths is not None:
-            master_model += pulp.lpSum(
+            master_model += lpSum(
                 [path_var[path] for path in
                  paths_dict.keys()]) == number_of_paths, "No of Vehicles"
 
@@ -77,15 +78,19 @@ class ColumnGenerationFormulation:
         if solver_type == 'PULP_CBC_CMD':
             master_model.solve(PULP_CBC_CMD(
                 msg=enable_solution_messaging,
-                maxSeconds=60 * solver_time_limit_minutes,
-                fracGap=mip_gap)
+                timeLimit=60*solver_time_limit_minutes,
+                gapRel=mip_gap)
             )
+        elif solver_type == "GUROBI_CMD":
+            solver = getSolver('GUROBI_CMD', msg=enable_solution_messaging,
+                timeLimit=60*solver_time_limit_minutes)
+            master_model.solve(solver)
 
+        print('Master Model Status = {}'.format(LpStatus[master_model.status]))
         if master_model.status == 1:
-
             solution_master_model_objective = value(master_model.objective)
             print('Master model objective = {}'.format(str(solution_master_model_objective)))
-
+    
             price = {}
             for customer in self.customers_dict['DEMAND'].keys():
                 price[customer] = float(master_model.constraints["Customer" + str(customer).replace(" ", "_")].pi)
@@ -96,7 +101,7 @@ class ColumnGenerationFormulation:
 
             solution_master_path = []
             for path in path_var.keys():
-                if path_var[path].value() > 0:
+                if path_var[path].value() and path_var[path].value() > 0:
                     solution_master_path.append({'PATH_NAME': path,
                                                  'VALUE': path_var[path].value(),
                                                  'PATH': paths_dict[path]
@@ -134,66 +139,107 @@ class ColumnGenerationFormulation:
         :return:
         '''
 
-        # sub problem
-        sub_model = pulp.LpProblem("SU_CVRPTW", pulp.LpMinimize)
-        time_var = pulp.LpVariable.dicts("Time", self.time_variables_dict.keys(), 0, None, pulp.LpContinuous)
-        assignment_var = pulp.LpVariable.dicts("Assign", self.assignment_variables_dict.keys(), 0, 1, pulp.LpBinary)
+        # sorted_price = sorted([(price, loc) for loc, price in price.items()], key=lambda x: x[0], reverse=True)
+        selected_node_num = 20
+        all_customers = list(price.keys())
+        if selected_node_num >= len(all_customers):
+            selected_customers = all_customers
+        else:
+            prices = list(price.values())
+            min_price, max_price = np.min(prices), np.max(prices)
+            prices = [(p-min_price)/max_price for p in prices]
+            total_price = np.sum(prices)
+            selected_probs = [p/total_price for p in prices]
+            selected_customers = np.random.choice(all_customers, size=selected_node_num, replace=False, p=selected_probs).tolist()
+        selected_customers.extend([self.depot_enter, self.depot_leave])
+        
+        local_time_variable_dict = {}
+        for key, val in self.time_variables_dict.items():
+            if key in selected_customers:
+                local_time_variable_dict[key] = val
 
-        #print('objective function')
+        local_assignment_variables_dict = {}
+        for key, val in self.assignment_variables_dict.items():
+            if key[0] in selected_customers  and key[1] in selected_customers:
+                local_assignment_variables_dict[key] = val
+
+        local_customer_dict = {}
+        for main_key, val_dict in self.customers_dict.items():
+            local_customer_dict[main_key] = {}
+            for key, val in val_dict.items():
+                if key in selected_customers:
+                    local_customer_dict[main_key][key] = val
+        # sub problem
+        sub_model = LpProblem("SU_CVRPTW", LpMinimize)
+        time_var = LpVariable.dicts("Time", local_time_variable_dict.keys(), 0, None, LpContinuous)
+        assignment_var = LpVariable.dicts("Assign", local_assignment_variables_dict.keys(), 0, 1, LpBinary)
+
+        print("selected customers: ", selected_customers)
+        print('objective function')
         objective_keys = []
-        for from_loc, to_loc in self.assignment_variables_dict.keys():
+        for from_loc, to_loc in local_assignment_variables_dict.keys():
             if from_loc != self.depot_leave:
                 objective_keys.append([from_loc, to_loc])
+        max_transportation_cost = np.max([self.transit_dict['TRANSPORTATION_COST'][from_loc, to_loc] for from_loc, to_loc in local_assignment_variables_dict.keys()])
 
-        sub_model += pulp.lpSum(
-            self.transit_dict['TRANSPORTATION_COST'][from_loc, to_loc] * assignment_var[from_loc, to_loc]
-            for from_loc, to_loc in self.assignment_variables_dict.keys())\
-            - pulp.lpSum(
-                price[from_loc] * assignment_var[from_loc, to_loc]
-            for from_loc, to_loc in objective_keys)
+        # sub_model += lpSum(
+        #     self.transit_dict['TRANSPORTATION_COST'][from_loc, to_loc] * assignment_var[from_loc, to_loc]
+        #     for from_loc, to_loc in local_assignment_variables_dict.keys())\
+        #     - lpSum(
+        #         (max_transportation_cost + price[from_loc]) * assignment_var[from_loc, to_loc]
+        #     for from_loc, to_loc in objective_keys)
+
+        sub_model += lpSum(
+            (self.transit_dict['TRANSPORTATION_COST'][from_loc, to_loc]-max_transportation_cost) * assignment_var[from_loc, to_loc]
+            for from_loc, to_loc in local_assignment_variables_dict.keys())
 
         # Each vehicle should leave from a depot
-        #print('Each vehicle should leave from a depot')
-        sub_model += pulp.lpSum([assignment_var[self.depot_leave, customer]
+        print('Each vehicle should leave from a depot')
+        sub_model += lpSum([assignment_var[self.depot_leave, customer]
                                  for customer in
-                                 self.customers_dict['DEMAND'].keys()]) == 1, "entryDepotConnection"
+                                 local_customer_dict['DEMAND'].keys()]) == 1, "entryDepotConnection"
 
         # Flow in Flow Out
-        #print('Flow in Flow out')
-        for customer in self.customers_dict['DEMAND'].keys():
-            incoming_arcs = []
-            outgoing_arcs = []
+        print('Flow in Flow out')
+        for customer in local_customer_dict['DEMAND'].keys():
+            _incoming_arcs = list(local_customer_dict['DEMAND'].keys())
+            _outgoing_arcs = list(local_customer_dict['DEMAND'].keys())
+            _incoming_arcs.remove(customer)
+            _outgoing_arcs.remove(customer)
+            # incoming_arcs = []
+            # outgoing_arcs = []
 
-            for from_loc, to_loc in self.assignment_variables_dict.keys():
-                if to_loc == customer:
-                    incoming_arcs.append(from_loc)
-                if from_loc == customer:
-                    outgoing_arcs.append(to_loc)
+            # for from_loc, to_loc in self.assignment_variables_dict.keys():
+            #     if to_loc == customer:
+            #         incoming_arcs.append(from_loc)
+            #     if from_loc == customer:
+            #         outgoing_arcs.append(to_loc)
 
-            sub_model += pulp.lpSum(
-                [assignment_var[from_loc, customer] for from_loc in incoming_arcs]) - pulp.lpSum(
-                [assignment_var[customer, to_loc] for to_loc in outgoing_arcs]) == 0, "forTrip" + str(
+            sub_model += lpSum(
+                [assignment_var[from_loc, customer] for from_loc in _incoming_arcs]) - lpSum(
+                [assignment_var[customer, to_loc] for to_loc in _outgoing_arcs]) == 0, "forTrip" + str(
                 customer)
 
         # Each vehicle should enter a depot
-        #print('Each vehicle should enter a depot')
-        sub_model += pulp.lpSum([assignment_var[customer, self.depot_enter]
+        print('Each vehicle should enter a depot')
+        sub_model += lpSum([assignment_var[customer, self.depot_enter]
                                  for customer in
-                                 self.customers_dict['DEMAND'].keys()]) == 1, "exitDepotConnection"
+                                 local_customer_dict['DEMAND'].keys()]) == 1, "exitDepotConnection"
 
         # vehicle Capacity
-        #print('vehicle Capacity')
-        sub_model += pulp.lpSum(
-            [float(self.customers_dict['DEMAND'][from_loc]) * assignment_var[from_loc, to_loc]
+        print('vehicle Capacity')
+        sub_model += lpSum(
+            [float(local_customer_dict['DEMAND'][from_loc]) * assignment_var[from_loc, to_loc]
              for from_loc, to_loc in
-             self.transit_starting_customers_dict['DRIVE_MINUTES'].keys()]) <= float(capacity), "Capacity"
+             self.transit_starting_customers_dict['DRIVE_MINUTES'].keys()
+             if (from_loc in selected_customers and to_loc in selected_customers)]) <= float(capacity), "Capacity"
 
         # Time intervals
-        #print('time intervals')
-        for from_loc, to_loc in self.assignment_variables_dict.keys():
+        print('time intervals')
+        for from_loc, to_loc in local_assignment_variables_dict.keys():
             stop_time = 0
             if from_loc != self.depot_leave:
-                stop_time = self.customers_dict['STOP_TIME'][from_loc]
+                stop_time = local_customer_dict['STOP_TIME'][from_loc]
             sub_model += time_var[to_loc] - time_var[from_loc] >= \
                          self.transit_dict['DRIVE_MINUTES'][
                              from_loc, to_loc] + stop_time + bigm * assignment_var[
@@ -201,24 +247,34 @@ class ColumnGenerationFormulation:
                 from_loc) + 'p' + str(to_loc)
 
         # Time Windows
-        #print('time windows')
-        for vertex in self.time_variables_dict.keys():
+        print('time windows')
+        for vertex in local_time_variable_dict.keys():
             time_var[vertex].bounds(float(self.vertices_dict['TIME_WINDOW_START'][vertex]),
                                     float(self.vertices_dict['TIME_WINDOW_END'][vertex]))
 
         if lp_file_name is not None:
             sub_model.writeLP('{}.lp'.format(str(lp_file_name)))
 
-        if solver_type == 'PULP_CBC_CMD':
-            sub_model.solve(PULP_CBC_CMD(
-                msg=enable_solution_messaging,
-                maxSeconds=60 * solver_time_limit_minutes,
-                fracGap=mip_gap)
-            )
+        # print("Using solver ", solver_type)
+        # if solver_type == 'PULP_CBC_CMD':
+        #     sub_model.solve(PULP_CBC_CMD(
+        #         msg=enable_solution_messaging,
+        #         timeLimit=60 * solver_time_limit_minutes,
+        #         fracGap=mip_gap)
+        #     )
+        # elif solver_type == "GUROBI_CMD":
+        #     solver = getSolver('GUROBI_CMD', msg=enable_solution_messaging,
+        #         timeLimit=60 * solver_time_limit_minutes)
+        #     sub_model.solve(solver)
 
-        if pulp.LpStatus[sub_model.status] in ('Optimal', 'Undefined'):
+        solver = getSolver('GUROBI_CMD', msg=enable_solution_messaging,
+                timeLimit=60 * solver_time_limit_minutes)
+        sub_model.solve(solver)
+        
 
-            print('Sub Model Status = {}'.format(pulp.LpStatus[sub_model.status]))
+        if LpStatus[sub_model.status] in ('Optimal', 'Undefined'):
+
+            print('Sub Model Status = {}'.format(LpStatus[sub_model.status]))
             print("Sub model optimized objective function= ", value(sub_model.objective))
 
             solution_objective = value(sub_model.objective)
@@ -226,7 +282,7 @@ class ColumnGenerationFormulation:
             # get assignment variable values
             #print('getting solution for assignment variables')
             solution_assignment = []
-            for from_loc, to_loc in self.assignment_variables_dict.keys():
+            for from_loc, to_loc in local_assignment_variables_dict.keys():
                 if assignment_var[from_loc, to_loc].value() > 0:
                     solution_assignment.append({'FROM_LOCATION_NAME': from_loc,
                                                 'TO_LOCATION_NAME': to_loc,
@@ -239,7 +295,7 @@ class ColumnGenerationFormulation:
             solution_assignment = pd.DataFrame(solution_assignment)
 
             # get time variable values
-            #print('getting solution for time variables')
+            print('getting solution for time variables')
             solution_time = []
             for loc in time_var.keys():
                 if time_var[loc].value() > 0:
@@ -281,9 +337,10 @@ class ColumnGenerationFormulation:
 
             solution_path['PATH_NAME'] = path_name
             solution_path['OBJECTIVE'] = solution_objective
+            print(solution_path)
 
             return solution_objective, solution_path, sub_model
 
         else:
-            print('Model Status = {}'.format(pulp.LpStatus[sub_model.status]))
+            print('Model Status = {}'.format(LpStatus[sub_model.status]))
             raise Exception('No Solution Exists for the Sub problem')
