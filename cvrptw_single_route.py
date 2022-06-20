@@ -203,11 +203,15 @@ def cvrptw_one_vehicle(selected_customers,
         route = []
         cur_node = depot
         route_data = []
-        while True:
+        print(route_dict)
+        while i < nb_customers:
             if cur_node != depot:
-                route.append(selected_customers[int(cur_node.split('_')[1])-1])
+                node = selected_customers[int(cur_node.split('_')[1])-1]
+                if node in route: break
+                else: route.append(node)
             route_data.append([cur_node, route_dict[cur_node], local_demands[cur_node], time_var[cur_node].value(), local_earliest_start[cur_node], local_latest_end[cur_node]])
             cur_node = route_dict[cur_node]
+            i += 1
             if cur_node == depot:
                 break
         route_df = pd.DataFrame(data=route_data, columns=['previous_node', "next_node", "demand", "arrive_time", "ready_time", "due_time"])
@@ -255,18 +259,20 @@ if __name__ == '__main__':
             paths_customers_dict[path_name, customer] = 1
         ## initialize path from tsp
         num_selected_customers = 0
-        for i in range(5):
+        for i in range(1):
             if i == 0: _tsp_solution = tsp_solution[:]
             else:
                 idx = np.random.randint(1, nb_customers-1)
                 _tsp_solution = tsp_solution[idx:] + tsp_solution[:idx]
-            for j in range(nb_customers-path_frag_len):
+            while len(_tsp_solution) > 0:
                 print(f"selected customers {num_selected_customers}")
-                selected_customers = _tsp_solution[j:j+path_frag_len]
+                selected_customers = _tsp_solution[:min(path_frag_len, len(_tsp_solution))]
                 solution_objective, route, route_df = cvrptw_one_vehicle(selected_customers, truck_capacity, distance_matrix, distance_warehouses, demands, service_time,
                                         earliest_start, latest_end, max_horizon, solver_type="GUROBI_CMD")
                 paths_dict, paths_cost_dict, paths_customers_dict = add_path(route, paths_dict, paths_cost_dict, paths_customers_dict, nb_customers, distance_warehouses, distance_matrix)
                 num_selected_customers += len(route)
+                for c in route:
+                    _tsp_solution.remove(c)
         print(f"selected customers {num_selected_customers}")
 
         with open(f"{dir_name}/{file_name}_path.txt", "wb") as f:
@@ -297,15 +303,16 @@ if __name__ == '__main__':
         all_customers = list(range(nb_customers))
         prices = list(prices_dict.values())
         # print(prices)
-        min_price, max_price = np.min(prices), np.max(prices)
-        norm_prices = [(x-min_price)/max_price for x in prices]
-        total_norm_price = np.sum(norm_prices)
-        prob_prices = [x/total_norm_price for x in norm_prices]
-        if np.random.random() >= 0.5:
-            selected_customers = np.random.choice(all_customers, size=path_frag_len, replace=False, p=prob_prices)
-        else:
-            idx = np.random.randint(path_frag_len, nb_customers-path_frag_len)
-            selected_customers = tsp_solution[idx:idx+path_frag_len]
+        # min_price, max_price = np.min(prices), np.max(prices)
+        # norm_prices = [(x-min_price)/max_price for x in prices]
+        # total_norm_price = np.sum(norm_prices)
+        # prob_prices = [x/total_norm_price for x in norm_prices]
+        # if np.random.random() >= 0.5:
+        #     selected_customers = np.random.choice(all_customers, size=path_frag_len, replace=False, p=prob_prices)
+        # else:
+        #     idx = np.random.randint(path_frag_len, nb_customers-path_frag_len)
+        #     selected_customers = tsp_solution[idx:idx+path_frag_len]
+        selected_customers = all_customers
         solution_objective, route, route_df = cvrptw_one_vehicle(selected_customers, truck_capacity, distance_matrix, distance_warehouses, demands, service_time,
                                 earliest_start, latest_end, max_horizon, solver_type="GUROBI_CMD")
         print("objective: ", solution_objective, 'route: ', route)
