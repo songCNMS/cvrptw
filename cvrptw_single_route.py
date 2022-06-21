@@ -204,6 +204,7 @@ def cvrptw_one_vehicle(selected_customers,
         cur_node = depot
         route_data = []
         print(route_dict)
+        i = 0
         while i < nb_customers:
             if cur_node != depot:
                 node = selected_customers[int(cur_node.split('_')[1])-1]
@@ -235,7 +236,7 @@ def add_path(route, paths_dict, paths_cost_dict, paths_customers_dict, nb_custom
 
 import os
 if __name__ == '__main__':
-    problem_file = "/data/songlei/cvrptw-optimization/cvrp_benchmarks/homberger_400_customer_instances/C1_4_2.TXT"
+    problem_file = "/data/songlei/cvrptw/cvrp_benchmarks/homberger_400_customer_instances/C1_4_2.TXT"
     dir_name = os.path.dirname(problem_file)
     file_name = os.path.splitext(os.path.basename(problem_file))[0]
     (nb_customers, nb_trucks, truck_capacity, distance_matrix, distance_warehouses, demands, service_time,
@@ -259,7 +260,7 @@ if __name__ == '__main__':
             paths_customers_dict[path_name, customer] = 1
         ## initialize path from tsp
         num_selected_customers = 0
-        for i in range(1):
+        for i in range(3):
             if i == 0: _tsp_solution = tsp_solution[:]
             else:
                 idx = np.random.randint(1, nb_customers-1)
