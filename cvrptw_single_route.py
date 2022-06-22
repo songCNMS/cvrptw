@@ -129,11 +129,16 @@ def cvrptw_one_vehicle(selected_customers,
 
     print('objective function')
     max_transportation_cost = np.max(list(local_transit_cost_dict.values()))
-
-    sub_model += lpSum(
-        (local_transit_cost_dict[from_loc, to_loc]-max_transportation_cost) * assignment_var[from_loc, to_loc]
-        for from_loc, to_loc in local_assignment_var_dict.keys())
     
+    if prices is None:
+        sub_model += lpSum(
+            (local_transit_cost_dict[from_loc, to_loc]-max_transportation_cost) * assignment_var[from_loc, to_loc]
+            for from_loc, to_loc in local_assignment_var_dict.keys())
+    else:
+        prices[depot] = 0.0
+        sub_model += lpSum(
+            (local_transit_cost_dict[from_loc, to_loc]-max_transportation_cost-prices[from_loc]) * assignment_var[from_loc, to_loc]
+            for from_loc, to_loc in local_assignment_var_dict.keys())
     # Each vehicle should leave from a depot
     print('Each vehicle should leave from a depot')
     sub_model += lpSum([assignment_var[depot, customer]
@@ -236,13 +241,13 @@ def add_path(route, paths_dict, paths_cost_dict, paths_customers_dict, nb_custom
 
 import os
 if __name__ == '__main__':
-    problem_file = "/data/songlei/cvrptw/cvrp_benchmarks/homberger_400_customer_instances/C1_4_2.TXT"
+    problem_file = "/home/lesong/cvrptw/cvrp_benchmarks/homberger_100_customer_instances/c104.txt"
     dir_name = os.path.dirname(problem_file)
     file_name = os.path.splitext(os.path.basename(problem_file))[0]
     (nb_customers, nb_trucks, truck_capacity, distance_matrix, distance_warehouses, demands, service_time,
                 earliest_start, latest_end, max_horizon, warehouse_x, warehouse_y, customers_x, customers_y) = read_input_cvrptw(problem_file)
     num_episodes = 100
-    path_frag_len = 15
+    min_path_frag_len, max_path_frag_len = 5, 15
     if True:
         print("solving a non-constraint tsp problem")
         tsp_solution = get_tsp_solution(nb_customers, distance_warehouses, distance_matrix)
@@ -267,9 +272,10 @@ if __name__ == '__main__':
                 _tsp_solution = tsp_solution[idx:] + tsp_solution[:idx]
             while len(_tsp_solution) > 0:
                 print(f"selected customers {num_selected_customers}")
+                path_frag_len = np.random.randint(min_path_frag_len, max_path_frag_len)
                 selected_customers = _tsp_solution[:min(path_frag_len, len(_tsp_solution))]
                 solution_objective, route, route_df = cvrptw_one_vehicle(selected_customers, truck_capacity, distance_matrix, distance_warehouses, demands, service_time,
-                                        earliest_start, latest_end, max_horizon, solver_type="GUROBI_CMD")
+                                        earliest_start, latest_end, max_horizon, solver_type="PULP_CBC_CMD")
                 paths_dict, paths_cost_dict, paths_customers_dict = add_path(route, paths_dict, paths_cost_dict, paths_customers_dict, nb_customers, distance_warehouses, distance_matrix)
                 num_selected_customers += len(route)
                 for c in route:
@@ -303,19 +309,14 @@ if __name__ == '__main__':
         print(f"sub model, episode: {i}")
         all_customers = list(range(nb_customers))
         prices = list(prices_dict.values())
-        # print(prices)
-        # min_price, max_price = np.min(prices), np.max(prices)
-        # norm_prices = [(x-min_price)/max_price for x in prices]
-        # total_norm_price = np.sum(norm_prices)
-        # prob_prices = [x/total_norm_price for x in norm_prices]
-        # if np.random.random() >= 0.5:
-        #     selected_customers = np.random.choice(all_customers, size=path_frag_len, replace=False, p=prob_prices)
-        # else:
-        #     idx = np.random.randint(path_frag_len, nb_customers-path_frag_len)
-        #     selected_customers = tsp_solution[idx:idx+path_frag_len]
-        selected_customers = all_customers
+        min_price, max_price = np.min(prices), np.max(prices)
+        norm_prices = [(x-min_price)/max_price for x in prices]
+        total_norm_price = np.sum(norm_prices)
+        prob_prices = [x/total_norm_price for x in norm_prices]
+        path_frag_len = np.random.randint(min_path_frag_len, max_path_frag_len)
+        selected_customers = np.random.choice(all_customers, size=path_frag_len, replace=False, p=prob_prices)
         solution_objective, route, route_df = cvrptw_one_vehicle(selected_customers, truck_capacity, distance_matrix, distance_warehouses, demands, service_time,
-                                earliest_start, latest_end, max_horizon, solver_type="GUROBI_CMD")
+                                earliest_start, latest_end, max_horizon, prices=prices_dict, solver_type="PULP_CBC_CMD")
         print("objective: ", solution_objective, 'route: ', route)
         print("capacity: ", truck_capacity, "total demand: ", route_df["demand"].sum())
         paths_dict, paths_cost_dict, paths_customers_dict = add_path(route, paths_dict, paths_cost_dict, paths_customers_dict, nb_customers, distance_warehouses, distance_matrix)
