@@ -1,3 +1,4 @@
+from dataclasses import replace
 from platform import node
 from select import select
 import numpy as np
@@ -12,17 +13,17 @@ from cvrptw_single_route import path_selection, cvrptw_one_vehicle, add_path
 
 depot = "Customer_0"
 
-def construct_init_solution(all_customers, truck_capacity,
-                            demands, service_time, 
-                            earliest_start, latest_end,
-                            distance_matrix):
-    num_routes = np.sum(list(demands.values())) // truck_capacity
+def construct_solution_from_seed(seed_customers, all_customers, truck_capacity,
+                                 demands, service_time, 
+                                 earliest_start, latest_end,
+                                 distance_matrix):
+    # num_routes = np.sum(list(demands.values())) // truck_capacity
+    num_routes = len(seed_customers)
     cur_routes = {}
     selected_customers = []
-    sorted_customers = sorted([(c, distance_matrix[depot][c]) for c in all_customers], reverse=True, key=lambda x: x[1])
     for i in range(1, 1+num_routes):
-        cur_routes[f"PATH_NAME_{i}"] = [sorted_customers[i-1][0]]
-        selected_customers.append(sorted_customers[i-1][0])
+        cur_routes[f"PATH_NAME_{i}"] = [seed_customers[i-1]]
+        selected_customers.append(seed_customers[i-1])
     for c in all_customers:
         if c in selected_customers: continue
         selected_customers.append(c)
@@ -42,39 +43,58 @@ def construct_init_solution(all_customers, truck_capacity,
             cur_routes[route_name] = cur_routes[route_name][:insert_pos] + [c] + cur_routes[route_name][insert_pos:]
     return cur_routes
 
+def cvrptw_one_route(selected_customers, truck_capacity,
+                     demands, service_time, 
+                     earliest_start, latest_end,
+                     distance_matrix):
+    min_cost = float("inf")
+    best_route = None
+    for c in selected_customers:
+        route = [c]
+        cur_demand = demands[c]
+        cost = distance_matrix[depot][c]
+        for _c in selected_customers:
+            if _c in route: continue
+            if demands[_c] + cur_demand < truck_capacity:
+                _cost, _pos = route_insertion_cost(route, _c, service_time, 
+                                                   earliest_start, latest_end,
+                                                   distance_matrix)
+                if _pos is not None:
+                    cur_demand += demands[_c]
+                    route = route[:_pos] + [_c] + route[_pos:]
+                    cost += _cost
+        if cost < min_cost:
+            min_cost = cost
+            best_route = route[:]
+    return best_route
 
-def select_candidate_points(routes, distance_matrix, all_customers):
-    route_key = np.random.choice(list(routes.keys()))
+def select_candidate_points(routes, distance_matrix, all_customers, only_short_routes=False):
+    if only_short_routes:
+        route_list = sorted([(r, len(r)) for r in routes.keys()], key=lambda x: x[1])
+        route_list = [x[0] for x in route_list]
+        route_key = np.random.choice(route_list[:min(5, len(route_list))])
+    else: route_key = np.random.choice(list(routes.keys()))
     route = routes[route_key]
-    # if len(route) < 3: return []
-    if len(route) >= 3:
-        node_idx = np.random.randint(0, len(route)-1)
-        M = [route[node_idx], route[node_idx+1]]
-        next_node = route[node_idx+1]
-    else: 
-        node_idx = 0
+    if len(route) <= 2: 
         M = route[:]
-        next_node = depot
-    dist = [(c, distance_matrix[route[node_idx]][c]+distance_matrix[c][next_node]) for c in all_customers if c not in M]
-    min_c1, min_c2 = None, None
-    min_dist1, min_dist2 = np.float("inf"), np.float("inf")
-    for c, d in dist:
-        if c in route: continue
-        if d < min_dist1:
-            min_dist2 = min_dist1
-            min_c2 = min_c1
-            min_dist1 = d
-            min_c1 = c
-        elif d < min_dist2:
-            min_dist2 = d
-            min_c2 = c
-    M.extend([min_c1, min_c2])
+        prev_node = next_node = depot
+    else:
+        node_idx = np.random.randint(0, len(route)-1)
+        M = route[node_idx:node_idx+2]
+        prev_node = (depot if node_idx == 0 else route[node_idx-1])
+        next_node = (depot if node_idx == len(route)-2 else route[node_idx+2])
+    dist = [(c, distance_matrix[prev_node][c]+distance_matrix[c][next_node]) for c in all_customers if c not in route]
+    dist = sorted(dist, key=lambda x: x[1])
+    M.extend([dist[i][0] for i in range(min(4, len(dist)))])
     return M
 
 def is_valid_pos(route, pos, customer, service_time, earliest_start, latest_end):
     new_route = route[:pos] + [customer] + route[pos:]
+    return time_window_check(new_route, service_time, earliest_start, latest_end)
+
+def time_window_check(route, service_time, earliest_start, latest_end):
     cur_time = 0.0
-    for r in [depot] + new_route + [depot]:
+    for r in [depot] + route + [depot]:
         if cur_time > latest_end[r]: return False
         cur_time = max(cur_time, earliest_start[r]) + service_time[r]
     return True
@@ -83,7 +103,7 @@ def route_insertion_cost(route, customer, service_time,
                          earliest_start, latest_end,
                          distance_matrix):
     route_len = len(route)
-    min_cost = np.float("inf")
+    min_cost = float("inf")
     min_pos = None
     for i in range(route_len+1):
         if is_valid_pos(route, i, customer, service_time, earliest_start, latest_end):
@@ -104,7 +124,9 @@ def route_insertion_cost(route, customer, service_time,
 
 def compute_route_cost(routes, distance_matrix):
     total_cost = 0.0
+    num_nodes = 0
     for route in routes.values():
+        num_nodes += len(route)
         total_cost += distance_matrix[depot][route[0]]
         for i in range(len(route)-1):
             total_cost += distance_matrix[route[i]][route[i+1]]
@@ -114,9 +136,9 @@ def compute_route_cost(routes, distance_matrix):
 
 def heuristic_improvement(cur_routes, all_customers, truck_capacity, demands, service_time, 
                           earliest_start, latest_end,
-                          distance_matrix):
+                          distance_matrix, only_short_routes=False):
     ori_total_cost = compute_route_cost(cur_routes, distance_matrix)
-    customers = select_candidate_points(cur_routes, distance_matrix, all_customers)
+    customers = select_candidate_points(cur_routes, distance_matrix, all_customers, only_short_routes=only_short_routes)
     routes_before_insert = {}
     # print("ori routes: ", cur_routes)
     for route_name, route in cur_routes.items():
@@ -133,7 +155,7 @@ def heuristic_improvement(cur_routes, all_customers, truck_capacity, demands, se
                                   for route_name, route in routes_before_insert.items()], key=lambda x: x[1][0])
         customer_to_route_dict[c] = [x for x in route_cost_list[:min(2, len(route_cost_list))] if (x[1][1] is not None)]
     
-    min_total_cost_increase = np.float("inf")
+    min_total_cost_increase = float("inf")
     new_routes_after_insertion = None
     for i in range(2**(len(customers))):
         idx_list = [(i//(2**j))%2 for j in range(len(customers))]
@@ -173,37 +195,19 @@ def heuristic_improvement(cur_routes, all_customers, truck_capacity, demands, se
         for route_name, route in routes_before_insert.items():
             if route_name in new_routes_after_insertion: new_routes[route_name] = new_routes_after_insertion[route_name]
             else: new_routes[route_name] = route
-        # routes_before_insert.update(new_routes_after_insertion)
-        # ori_total_cost = compute_route_cost(cur_routes, distance_matrix)
         ori_total_cost = min_total_cost_increase + total_cost_before_insert
     else: new_routes = cur_routes
     return new_routes, ori_total_cost
 
-
-import matplotlib.pyplot as plt
-import os
-import argparse
-parser = argparse.ArgumentParser()
-parser.add_argument("--problem", type=str)
-parser.add_argument("--num_nodes", type=int)
-parser.add_argument("--retrain", action="store_true")
-parser.add_argument("--opt", action="store_true")
-args = parser.parse_args()
-
-if __name__ == '__main__':
-    problem_file = f"/home/lesong/cvrptw/cvrp_benchmarks/homberger_{args.num_nodes}_customer_instances/{args.problem}.TXT"
-    dir_name = os.path.dirname(problem_file)
-    file_name = os.path.splitext(os.path.basename(problem_file))[0]
-    (nb_customers, nb_trucks, truck_capacity, distance_matrix, distance_warehouses, demands, service_time,
-                earliest_start, latest_end, max_horizon, warehouse_x, warehouse_y, customers_x, customers_y) = read_input_cvrptw(problem_file)
-    
+def get_problem_dict(nb_customers,
+                    demands, service_time, 
+                    earliest_start, latest_end, max_horizon, 
+                    distance_warehouses, distance_matrix):
     distance_matrix_dict = {}
     demands_dict = {}
     service_time_dict = {}
     earliest_start_dict = {}
     latest_end_dict = {}
-    # tsp_solution = get_tsp_solution(nb_customers, distance_warehouses, distance_matrix)
-    # all_customers = [f"Customer_{c+1}" for c in tsp_solution]
     all_customers = [f"Customer_{i}" for i in range(1, 1+nb_customers)]
     for i, customer1 in enumerate([depot] + all_customers):
         if i == 0:
@@ -222,87 +226,174 @@ if __name__ == '__main__':
             elif i == 0 and j > 0: distance_matrix_dict[customer1][customer2] = distance_warehouses[j-1]
             elif i > 0 and j == 0: distance_matrix_dict[customer1][customer2] = distance_warehouses[i-1]
             else: distance_matrix_dict[customer1][customer2] = distance_matrix[i-1][j-1]
+    return all_customers, demands_dict, service_time_dict, earliest_start_dict, latest_end_dict, distance_matrix_dict
+
+def generate_init_solution(nb_customers, truck_capacity,
+                           demands, service_time, 
+                           earliest_start, latest_end, max_horizon, 
+                           distance_warehouses, distance_matrix,
+                           paths_dict, paths_cost_dict, paths_customers_dict):
+    
+    min_path_frag_len, max_path_frag_len = 8, 50
+    print("solving a non-constraint tsp problem")
+    tsp_solution = get_tsp_solution(nb_customers, distance_warehouses, distance_matrix)
+    all_customers, demands_dict, \
+        service_time_dict, earliest_start_dict, latest_end_dict,\
+            distance_matrix_dict = get_problem_dict(nb_customers, demands, service_time,
+                                                    earliest_start, latest_end, max_horizon,
+                                                    distance_warehouses, distance_matrix)
+                                                                                        
+    # initialize path from tsp
+    num_selected_customers = 0
+    for i in range(20):
+        if i == 0: _tsp_solution = tsp_solution[:]
+        else:
+            idx = np.random.randint(1, nb_customers-1)
+            _tsp_solution = tsp_solution[idx:] + tsp_solution[:idx]
+        while len(_tsp_solution) > 0:
+            path_frag_len = np.random.randint(min_path_frag_len, max_path_frag_len)
+            selected_customers = _tsp_solution[:min(path_frag_len, len(_tsp_solution))]
+            _, route, _ = cvrptw_one_vehicle(selected_customers, truck_capacity, 
+                                             distance_matrix, distance_warehouses, 
+                                             demands, service_time,
+                                             earliest_start, latest_end, 
+                                             max_horizon, solver_type="PULP_CBC_CMD")
+            
+            _selected_customers = [f"Customer_{c+1}" for c in route]
+            if np.sum([demands_dict[c] for c in _selected_customers]) <= truck_capacity and time_window_check(_selected_customers, service_time_dict, earliest_start_dict, latest_end_dict):
+                paths_dict, paths_cost_dict, paths_customers_dict = add_path(route, paths_dict, paths_cost_dict, paths_customers_dict, nb_customers, distance_warehouses, distance_matrix)
+            else:
+                route = cvrptw_one_route(_selected_customers, truck_capacity,
+                                        demands_dict, service_time_dict, 
+                                        earliest_start_dict, latest_end_dict,
+                                        distance_matrix_dict)
+                route = [int(c.split("_")[1])-1 for c in route]
+                paths_dict, paths_cost_dict, paths_customers_dict = add_path(route, paths_dict, paths_cost_dict, paths_customers_dict, nb_customers, distance_warehouses, distance_matrix)
+            
+            _selected_customers = [f"Customer_{c+1}" for c in selected_customers]
+            route = cvrptw_one_route(_selected_customers, truck_capacity,
+                                    demands_dict, service_time_dict, 
+                                    earliest_start_dict, latest_end_dict,
+                                    distance_matrix_dict)
+            route = [int(c.split("_")[1])-1 for c in route]
+            paths_dict, paths_cost_dict, paths_customers_dict = add_path(route, paths_dict, paths_cost_dict, paths_customers_dict, nb_customers, distance_warehouses, distance_matrix)
+            num_selected_customers += len(route)
+            for c in route: _tsp_solution.remove(c)
+    total_cost, _, cur_routes = path_selection(nb_customers, 
+                                               paths_dict,
+                                               paths_cost_dict,
+                                               paths_customers_dict,
+                                               solver_type='PULP_CBC_CMD')
+    
+    return cur_routes, total_cost, paths_dict, paths_cost_dict, paths_customers_dict
+    
+
+def main(problem_file):
+    dir_name = os.path.dirname(problem_file)
+    file_name = os.path.splitext(os.path.basename(problem_file))[0]
+    (nb_customers, nb_trucks, truck_capacity, distance_matrix, distance_warehouses, demands, service_time,
+                earliest_start, latest_end, max_horizon, warehouse_x, warehouse_y, customers_x, customers_y) = read_input_cvrptw(problem_file)
     
     num_episodes = 10000
     early_stop_rounds = 1000
-    min_path_frag_len, max_path_frag_len = 8, 15
-    if args.retrain:
-        print("solving a non-constraint tsp problem")
-        tsp_solution = get_tsp_solution(nb_customers, distance_warehouses, distance_matrix)
-        total_num_path = nb_customers
-        paths_dict = {}
-        paths_cost_dict = {}
-        paths_customers_dict = {}
-        for i in range(nb_customers):
-            path_name = f"PATH_{i}"
-            customer = f"Customer_{i+1}"
-            paths_dict[path_name] = [customer]
-            paths_cost_dict[path_name] = distance_warehouses[i]*2
-            for j in range(nb_customers):
-                paths_customers_dict[path_name, f"Customer_{j+1}"] = 0
-            paths_customers_dict[path_name, customer] = 1
-        ## initialize path from tsp
-        num_selected_customers = 0
-        for i in range(1):
-            if i == 0: _tsp_solution = tsp_solution[:]
-            else:
-                idx = np.random.randint(1, nb_customers-1)
-                _tsp_solution = tsp_solution[idx:] + tsp_solution[:idx]
-            while len(_tsp_solution) > 0:
-                print(f"selected customers {num_selected_customers}")
-                path_frag_len = 15 # np.random.randint(min_path_frag_len, max_path_frag_len)
-                selected_customers = _tsp_solution[:min(path_frag_len, len(_tsp_solution))]
-                solution_objective, route, route_df = cvrptw_one_vehicle(selected_customers, truck_capacity, distance_matrix, distance_warehouses, demands, service_time,
-                                        earliest_start, latest_end, max_horizon, solver_type="PULP_CBC_CMD")
-                paths_dict, paths_cost_dict, paths_customers_dict = add_path(route, paths_dict, paths_cost_dict, paths_customers_dict, nb_customers, distance_warehouses, distance_matrix)
-                num_selected_customers += len(route)
-                for c in route: _tsp_solution.remove(c)
-        print(f"selected customers {num_selected_customers}")
-        with open(f"{dir_name}/{file_name}_path.txt", "wb") as f:
-            pickle.dump(paths_dict, f)
-        with open(f"{dir_name}/{file_name}_path_cost.txt", "wb") as f:
-            pickle.dump(paths_cost_dict, f)
-        with open(f"{dir_name}/{file_name}_path_customer.txt", "wb") as f:
-            pickle.dump(paths_customers_dict, f)
-    if args.opt:
-        with open(f"{dir_name}/{file_name}_path.txt", "rb") as f:
-            paths_dict = pickle.load(f)
-        with open(f"{dir_name}/{file_name}_path_cost.txt", "rb") as f:
-            paths_cost_dict = pickle.load(f)
-        with open(f"{dir_name}/{file_name}_path_customer.txt", "rb") as f:
-            paths_customers_dict = pickle.load(f)
-    
-    cost_list = []
-    if args.opt:
-        total_cost, prices_dict, cur_routes = path_selection(nb_customers, 
-                                                             paths_dict,
-                                                             paths_cost_dict,
-                                                             paths_customers_dict,
-                                                             solver_type='PULP_CBC_CMD')
-    else:
-        cur_routes = construct_init_solution(all_customers, truck_capacity,
-                                            demands_dict, service_time_dict, 
-                                            earliest_start_dict, latest_end_dict,
-                                            distance_matrix_dict)
-        total_cost = compute_route_cost(cur_routes, distance_matrix_dict)
-    print("Master model total cost: ", total_cost)
-    cost_list.append(total_cost)
-    # fine tuning using dual-variable
-    for i in range(num_episodes):
-        cur_routes, total_cost= heuristic_improvement(cur_routes, all_customers, truck_capacity, 
-                                                      demands_dict, service_time_dict, 
-                                                      earliest_start_dict, latest_end_dict,
-                                                      distance_matrix_dict)
-        print(f"Fine tune round {i}, total cost: {total_cost}")
+    num_rounds = 20
+    all_customers, demands_dict, service_time_dict,\
+        earliest_start_dict, latest_end_dict, distance_matrix_dict \
+                    = get_problem_dict(nb_customers, demands, service_time,
+                                       earliest_start, latest_end, max_horizon,
+                                       distance_warehouses, distance_matrix)
+    all_cost_list = []
+    best_routes = None
+    min_total_cost = float("inf")
+    paths_dict = {}
+    paths_cost_dict = {}
+    paths_customers_dict = {}
+    for i in range(nb_customers):
+        path_name = f"PATH_{i}"
+        customer = f"Customer_{i+1}"
+        paths_dict[path_name] = [customer]
+        paths_cost_dict[path_name] = distance_warehouses[i]*2
+        for j in range(nb_customers):
+            paths_customers_dict[path_name, f"Customer_{j+1}"] = 0
+        paths_customers_dict[path_name, customer] = 1
+        
+    for round in range(num_rounds):
+        cur_routes, total_cost, paths_dict, paths_cost_dict, paths_customers_dict = \
+                                generate_init_solution(nb_customers, truck_capacity, demands, service_time,
+                                                       earliest_start, latest_end, max_horizon,
+                                                       distance_warehouses, distance_matrix,
+                                                       paths_dict, paths_cost_dict, paths_customers_dict)
+        
+        
+        cost_list = []
+        print("Master model total cost: ", total_cost)
         cost_list.append(total_cost)
-        if len(cost_list) > early_stop_rounds and np.min(cost_list[-early_stop_rounds:]) >= np.min(cost_list[:-early_stop_rounds]):
-            break
-    plt.plot(cost_list)
+        # fine tuning using dual-variable
+        for i in range(num_episodes):
+            cur_routes, total_cost = heuristic_improvement(cur_routes, all_customers, truck_capacity, 
+                                                           demands_dict, service_time_dict, 
+                                                           earliest_start_dict, latest_end_dict,
+                                                           distance_matrix_dict)
+            print(f"Round {round}, Fine tune {i}, total cost: {total_cost}")
+            cost_list.append(total_cost)
+            all_cost_list.append(total_cost)
+            if total_cost < min_total_cost:
+                min_total_cost = total_cost
+                best_routes = {route_name: route[:] for route_name, route in cur_routes.items()}
+            if len(cost_list) > early_stop_rounds and np.min(cost_list[-early_stop_rounds:]) >= np.min(cost_list[:-early_stop_rounds]):
+                break
+    
+    plt.plot(all_cost_list)
     plt.ylabel('Total Distance')
-    plt.savefig("total_cost.png")
-    total_path_num = len(cur_routes.keys())
+    plt.savefig(f"{dir_name}/{file_name}_total_cost.png")
+    total_path_num = len(best_routes.keys())
     total_nodes = set()
-    for _, route in cur_routes.items():
+    for _, route in best_routes.items():
+        assert time_window_check(route, service_time_dict, earliest_start_dict, latest_end_dict), "time windows breaking"
         for c in route: total_nodes.add(c)
+        assert np.sum([demands_dict[c] for c in route]) <= truck_capacity, "overload"
     print(f"total vehicles: {total_path_num}, total nodes: {len(total_nodes)}")
-    print(cur_routes)
+    for route_name, route in best_routes.items():
+        print(f"{route_name}, demand: {np.sum([demands_dict[c] for c in route])}, {len(route)}, {route}")
+    return total_path_num, min_total_cost
+
+
+from datetime import datetime
+import matplotlib.pyplot as plt
+import os
+import argparse
+parser = argparse.ArgumentParser()
+parser.add_argument("--problem", type=str)
+parser.add_argument("--num_nodes", type=int)
+parser.add_argument("--retrain", action="store_true")
+parser.add_argument("--opt", action="store_true")
+parser.add_argument("--batch", action="store_true")
+args = parser.parse_args()
+
+if __name__ == '__main__':
+    sota_res = pd.read_csv("sota_res.csv")
+    sota_res_dict = {row["problem"]: (row["distance"], row["vehicle"]) for _, row in sota_res.iterrows()}
+    if args.batch:
+        result_list = []
+        dir_name = os.path.dirname(f"/home/lesong/cvrptw/cvrp_benchmarks/homberger_{args.num_nodes}_customer_instances/")
+        problem_list = os.listdir(dir_name)
+        for problem in problem_list:
+            problem_file = os.path.join(dir_name, problem)
+            if str.lower(os.path.splitext(os.path.basename(problem_file))[1]) != '.txt': continue
+            if "path" in problem: continue
+            print(problem_file)
+            problem_name =  str.lower(os.path.splitext(os.path.basename(problem_file))[0])
+            total_path_num, total_cost = main(problem_file)
+            sota = sota_res_dict.get(problem_name, (1, 1))
+            result_list.append([problem, total_path_num, total_cost, sota[1], sota[0]])
+        res_df = pd.DataFrame(data=result_list, columns=['problem', 'vehicles', 'total_cost', 'sota_vehicles', 'sota_cost'])
+        res_df.loc[:, "gap"] = (res_df["sota"] - res_df["total_cost"])/res_df["sota"]
+        res_df.to_csv(f"{dir_name}/res_{datetime.now().strftime('%Y%m%d_%H%M')}.csv", index=False)
+        print(res_df.head())
+    else:
+        problem_file = f"/home/lesong/cvrptw/cvrp_benchmarks/homberger_{args.num_nodes}_customer_instances/{args.problem}"
+        dir_name = os.path.dirname(problem_file)
+        problem_name = str.lower(os.path.splitext(os.path.basename(problem_file))[0])
+        sota = sota_res_dict.get(problem_name, (1, 1))
+        total_path_num, total_cost = main(problem_file)
+        print(args.problem, (total_path_num, sota[1]), (total_cost, sota[0]), (total_cost-sota[0])/sota[0])

@@ -89,7 +89,7 @@ def path_selection(num_customers,
     else:
         path_var = LpVariable.dicts("Path", paths_dict.keys(), 0, 1, LpContinuous)
     print('Master model objective function')
-    master_model += lpSum(paths_cost_dict[path] * path_var[path] for path in paths_dict.keys())
+    master_model += lpSum((paths_cost_dict[path]+1000000) * path_var[path] for path in paths_dict.keys())
 
     print('Each customer belongs to one path')
     for customer in customers_var:
@@ -152,7 +152,7 @@ def cvrptw_one_vehicle(selected_customers,
                        max_horizon,
                        prices = None,
                        lp_file_name = None,
-                       bigm=1000000,
+                       bigm=10000000,
                        mip_gap=0.001,
                        solver_time_limit_minutes=10,
                        enable_solution_messaging=1,
@@ -190,7 +190,7 @@ def cvrptw_one_vehicle(selected_customers,
     # sub problem
     sub_model = LpProblem("SU_CVRPTW", LpMinimize)
     time_var = LpVariable.dicts("Time", local_customers_var, 0, None, LpContinuous)
-    assignment_var = LpVariable.dicts("Assign", local_assignment_var_dict.keys(), 0, 1, LpBinary)
+    assignment_var = LpVariable.dicts("Assign", local_assignment_var_dict.keys(), 0, 1, LpContinuous) #LpBinary
 
     print('objective function')
     max_transportation_cost = np.max(list(local_transit_cost_dict.values()))
@@ -272,34 +272,41 @@ def cvrptw_one_vehicle(selected_customers,
                 route_dict[from_loc] = to_loc
         route = []
         cur_node = depot
-        route_data = []
+        # route_data = []
         while True:
             if cur_node != depot:
                 node = selected_customers[int(cur_node.split('_')[1])-1]
                 if node in route: break
                 else: route.append(node)
-            route_data.append([cur_node, route_dict[cur_node], local_demands[cur_node], time_var[cur_node].value(), local_earliest_start[cur_node], local_latest_end[cur_node]])
-            cur_node = route_dict[cur_node]
+            # route_data.append([cur_node, route_dict[cur_node], local_demands[cur_node], time_var[cur_node].value(), local_earliest_start[cur_node], local_latest_end[cur_node]])
+            if cur_node in route_dict: cur_node = route_dict[cur_node]
+            else: break
             i += 1
             if cur_node == depot:
                 break
-        route_df = pd.DataFrame(data=route_data, columns=['previous_node', "next_node", "demand", "arrive_time", "ready_time", "due_time"])
-        return solution_objective, route, route_df
+        # route_df = pd.DataFrame(data=route_data, columns=['previous_node', "next_node", "demand", "arrive_time", "ready_time", "due_time"])
+        return solution_objective, route, None
     else:
         print('Model Status = {}'.format(LpStatus[sub_model.status]))
         raise Exception('No Solution Exists for the Sub problem')
 
+def route_exist(route, paths_dict):
+    for _, _route in paths_dict.items():
+        if "_".join([str(r) for r in route]) == "_".join([str(r) for r in _route]): return True
+    return False
+
 def add_path(route, paths_dict, paths_cost_dict, paths_customers_dict, nb_customers, distance_warehouses, distance_matrix):
-    total_num_path = len(paths_dict.keys())
-    path_name = f"PATH_{total_num_path}"
-    paths_dict[path_name] = [f"Customer_{c+1}" for c in route]
-    paths_cost_dict[path_name] = distance_warehouses[route[0]] + distance_warehouses[route[-1]]
-    for j in range(len(route)-1):
-        paths_cost_dict[path_name] += distance_matrix[route[j]][route[j+1]]
-    for j in range(nb_customers):
-        paths_customers_dict[path_name, f"Customer_{j+1}"] = 0
-    for j in route:
-        paths_customers_dict[path_name, f"Customer_{j+1}"] = 1
+    if not route_exist(route, paths_dict):
+        total_num_path = len(paths_dict.keys())
+        path_name = f"PATH_{total_num_path}"
+        paths_dict[path_name] = [f"Customer_{c+1}" for c in route]
+        paths_cost_dict[path_name] = distance_warehouses[route[0]] + distance_warehouses[route[-1]]
+        for j in range(len(route)-1):
+            paths_cost_dict[path_name] += distance_matrix[route[j]][route[j+1]]
+        for j in range(nb_customers):
+            paths_customers_dict[path_name, f"Customer_{j+1}"] = 0
+        for j in route:
+            paths_customers_dict[path_name, f"Customer_{j+1}"] = 1
     return paths_dict, paths_cost_dict, paths_customers_dict
 
 import os

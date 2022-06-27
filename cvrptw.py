@@ -82,7 +82,7 @@ def compute_distance_warehouses(depot_x, depot_y, customers_x, customers_y):
 
 
 def compute_dist(xi, xj, yi, yj):
-    return math.sqrt(math.pow(xi - xj, 2) + math.pow(yi - yj, 2))
+    return round(math.sqrt(math.pow(xi - xj, 2) + math.pow(yi - yj, 2)), 2)
 
 
 # depots = dat.depots1
