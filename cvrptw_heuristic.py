@@ -290,6 +290,7 @@ def generate_init_solution(nb_customers, truck_capacity,
 def one_round_heuristics(round, round_res_dict, nb_customers, truck_capacity, demands, service_time,
                          earliest_start, latest_end, max_horizon,
                          distance_warehouses, distance_matrix):
+    np.random.seed(round)
     num_episodes = 10000
     early_stop_rounds = 1000
     all_customers, demands_dict, service_time_dict,\
@@ -331,6 +332,8 @@ def one_round_heuristics(round, round_res_dict, nb_customers, truck_capacity, de
             break
     round_res_dict[round] = (total_cost, cur_routes)
     return
+
+import time
 
 def main(problem_file, round_res_dict):
     # dir_name = os.path.dirname(problem_file)
