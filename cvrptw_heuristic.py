@@ -245,7 +245,7 @@ def generate_init_solution(nb_customers, truck_capacity,
                                                                                         
     # initialize path from tsp
     num_selected_customers = 0
-    for i in range(20):
+    for i in range(40):
         if i == 0: _tsp_solution = tsp_solution[:]
         else:
             idx = np.random.randint(1, nb_customers-1)
@@ -287,24 +287,16 @@ def generate_init_solution(nb_customers, truck_capacity,
     
     return cur_routes, total_cost, paths_dict, paths_cost_dict, paths_customers_dict
     
-
-def main(problem_file):
-    dir_name = os.path.dirname(problem_file)
-    file_name = os.path.splitext(os.path.basename(problem_file))[0]
-    (nb_customers, nb_trucks, truck_capacity, distance_matrix, distance_warehouses, demands, service_time,
-                earliest_start, latest_end, max_horizon, warehouse_x, warehouse_y, customers_x, customers_y) = read_input_cvrptw(problem_file)
-    
+def one_round_heuristics(round, round_res_dict, nb_customers, truck_capacity, demands, service_time,
+                         earliest_start, latest_end, max_horizon,
+                         distance_warehouses, distance_matrix):
     num_episodes = 10000
     early_stop_rounds = 1000
-    num_rounds = 20
     all_customers, demands_dict, service_time_dict,\
         earliest_start_dict, latest_end_dict, distance_matrix_dict \
                     = get_problem_dict(nb_customers, demands, service_time,
                                        earliest_start, latest_end, max_horizon,
                                        distance_warehouses, distance_matrix)
-    all_cost_list = []
-    best_routes = None
-    min_total_cost = float("inf")
     paths_dict = {}
     paths_cost_dict = {}
     paths_customers_dict = {}
@@ -317,47 +309,53 @@ def main(problem_file):
             paths_customers_dict[path_name, f"Customer_{j+1}"] = 0
         paths_customers_dict[path_name, customer] = 1
         
-    for round in range(num_rounds):
-        cur_routes, total_cost, paths_dict, paths_cost_dict, paths_customers_dict = \
-                                generate_init_solution(nb_customers, truck_capacity, demands, service_time,
-                                                       earliest_start, latest_end, max_horizon,
-                                                       distance_warehouses, distance_matrix,
-                                                       paths_dict, paths_cost_dict, paths_customers_dict)
-        
-        
-        cost_list = []
-        print("Master model total cost: ", total_cost)
-        cost_list.append(total_cost)
-        # fine tuning using dual-variable
-        for i in range(num_episodes):
-            cur_routes, total_cost = heuristic_improvement(cur_routes, all_customers, truck_capacity, 
-                                                           demands_dict, service_time_dict, 
-                                                           earliest_start_dict, latest_end_dict,
-                                                           distance_matrix_dict)
-            print(f"Round {round}, Fine tune {i}, total cost: {total_cost}")
-            cost_list.append(total_cost)
-            all_cost_list.append(total_cost)
-            if total_cost < min_total_cost:
-                min_total_cost = total_cost
-                best_routes = {route_name: route[:] for route_name, route in cur_routes.items()}
-            if len(cost_list) > early_stop_rounds and np.min(cost_list[-early_stop_rounds:]) >= np.min(cost_list[:-early_stop_rounds]):
-                break
+    cur_routes, total_cost, paths_dict, paths_cost_dict, paths_customers_dict = \
+                            generate_init_solution(nb_customers, truck_capacity, demands, service_time,
+                                                    earliest_start, latest_end, max_horizon,
+                                                    distance_warehouses, distance_matrix,
+                                                    paths_dict, paths_cost_dict, paths_customers_dict)
     
-    plt.plot(all_cost_list)
-    plt.ylabel('Total Distance')
-    plt.savefig(f"{dir_name}/{file_name}_total_cost.png")
-    total_path_num = len(best_routes.keys())
-    total_nodes = set()
-    for _, route in best_routes.items():
-        assert time_window_check(route, service_time_dict, earliest_start_dict, latest_end_dict), "time windows breaking"
-        for c in route: total_nodes.add(c)
-        assert np.sum([demands_dict[c] for c in route]) <= truck_capacity, "overload"
-    print(f"total vehicles: {total_path_num}, total nodes: {len(total_nodes)}")
-    for route_name, route in best_routes.items():
-        print(f"{route_name}, demand: {np.sum([demands_dict[c] for c in route])}, {len(route)}, {route}")
-    return total_path_num, min_total_cost
+    
+    cost_list = []
+    print("Master model total cost: ", total_cost)
+    cost_list.append(total_cost)
+    # fine tuning using dual-variable
+    for i in range(num_episodes):
+        cur_routes, total_cost = heuristic_improvement(cur_routes, all_customers, truck_capacity, 
+                                                       demands_dict, service_time_dict, 
+                                                       earliest_start_dict, latest_end_dict,
+                                                       distance_matrix_dict)
+        print(f"Round {round}, Fine tune {i}, total cost: {total_cost}")
+        cost_list.append(total_cost)
+        if len(cost_list) > early_stop_rounds and np.min(cost_list[-early_stop_rounds:]) >= np.min(cost_list[:-early_stop_rounds]):
+            break
+    round_res_dict[round] = (total_cost, cur_routes)
+    return
 
+def main(problem_file, round_res_dict):
+    # dir_name = os.path.dirname(problem_file)
+    # file_name = os.path.splitext(os.path.basename(problem_file))[0]
+    (nb_customers, nb_trucks, truck_capacity, distance_matrix, distance_warehouses, demands, service_time,
+                earliest_start, latest_end, max_horizon, warehouse_x, warehouse_y, customers_x, customers_y) = read_input_cvrptw(problem_file)
+    
+    num_rounds = mp.cpu_count()
+    procs = []
+    for round in range(num_rounds):
+        print("start round ", round)
+        proc = mp.Process(target=one_round_heuristics, args=(round, round_res_dict, nb_customers, truck_capacity, demands, service_time,
+                                                             earliest_start, latest_end, max_horizon,
+                                                             distance_warehouses, distance_matrix,))
+        procs.append(proc)
+        proc.start()
+    for proc in procs:
+        proc.join()
+    round_cost_list = sorted([(round, val[0]) for round, val in round_res_dict.items()], key=lambda x: x[1])
+    print(round_cost_list)
+    best_round = round_cost_list[0][0]
+    return len(round_res_dict[best_round][1]), round_res_dict[best_round][0]
+    
 
+import multiprocessing as mp
 from datetime import datetime
 import matplotlib.pyplot as plt
 import os
@@ -373,9 +371,11 @@ args = parser.parse_args()
 if __name__ == '__main__':
     sota_res = pd.read_csv("sota_res.csv")
     sota_res_dict = {row["problem"]: (row["distance"], row["vehicle"]) for _, row in sota_res.iterrows()}
+    manager = mp.Manager()
+    round_res_dict = manager.dict()
     if args.batch:
         result_list = []
-        dir_name = os.path.dirname(f"/home/lesong/cvrptw/cvrp_benchmarks/homberger_{args.num_nodes}_customer_instances/")
+        dir_name = os.path.dirname(f"/data/songlei/cvrptw/cvrp_benchmarks/homberger_{args.num_nodes}_customer_instances/")
         problem_list = os.listdir(dir_name)
         for problem in problem_list:
             problem_file = os.path.join(dir_name, problem)
@@ -383,7 +383,7 @@ if __name__ == '__main__':
             if "path" in problem: continue
             print(problem_file)
             problem_name =  str.lower(os.path.splitext(os.path.basename(problem_file))[0])
-            total_path_num, total_cost = main(problem_file)
+            total_path_num, total_cost = main(problem_file, round_res_dict)
             sota = sota_res_dict.get(problem_name, (1, 1))
             result_list.append([problem, total_path_num, total_cost, sota[1], sota[0]])
         res_df = pd.DataFrame(data=result_list, columns=['problem', 'vehicles', 'total_cost', 'sota_vehicles', 'sota_cost'])
@@ -391,9 +391,9 @@ if __name__ == '__main__':
         res_df.to_csv(f"{dir_name}/res_{datetime.now().strftime('%Y%m%d_%H%M')}.csv", index=False)
         print(res_df.head())
     else:
-        problem_file = f"/home/lesong/cvrptw/cvrp_benchmarks/homberger_{args.num_nodes}_customer_instances/{args.problem}"
+        problem_file = f"/data/songlei/cvrptw/cvrp_benchmarks/homberger_{args.num_nodes}_customer_instances/{args.problem}"
         dir_name = os.path.dirname(problem_file)
         problem_name = str.lower(os.path.splitext(os.path.basename(problem_file))[0])
         sota = sota_res_dict.get(problem_name, (1, 1))
-        total_path_num, total_cost = main(problem_file)
+        total_path_num, total_cost = main(problem_file, round_res_dict)
         print(args.problem, (total_path_num, sota[1]), (total_cost, sota[0]), (total_cost-sota[0])/sota[0])
