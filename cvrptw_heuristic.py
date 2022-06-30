@@ -291,7 +291,7 @@ def one_round_heuristics(round, round_res_dict, nb_customers, truck_capacity, de
                          earliest_start, latest_end, max_horizon,
                          distance_warehouses, distance_matrix):
     np.random.seed(round)
-    num_episodes = 10000
+    num_episodes = 100000
     early_stop_rounds = 1000
     all_customers, demands_dict, service_time_dict,\
         earliest_start_dict, latest_end_dict, distance_matrix_dict \
@@ -380,6 +380,7 @@ if __name__ == '__main__':
         result_list = []
         dir_name = os.path.dirname(f"/data/songlei/cvrptw/cvrp_benchmarks/homberger_{args.num_nodes}_customer_instances/")
         problem_list = os.listdir(dir_name)
+        res_file_name = f"{dir_name}/res_{datetime.now().strftime('%Y%m%d_%H%M')}.csv"
         for problem in problem_list:
             problem_file = os.path.join(dir_name, problem)
             if str.lower(os.path.splitext(os.path.basename(problem_file))[1]) != '.txt': continue
@@ -389,9 +390,9 @@ if __name__ == '__main__':
             total_path_num, total_cost = main(problem_file, round_res_dict)
             sota = sota_res_dict.get(problem_name, (1, 1))
             result_list.append([problem, total_path_num, total_cost, sota[1], sota[0]])
-        res_df = pd.DataFrame(data=result_list, columns=['problem', 'vehicles', 'total_cost', 'sota_vehicles', 'sota_cost'])
-        res_df.loc[:, "gap"] = (res_df["sota"] - res_df["total_cost"])/res_df["sota"]
-        res_df.to_csv(f"{dir_name}/res_{datetime.now().strftime('%Y%m%d_%H%M')}.csv", index=False)
+            res_df = pd.DataFrame(data=result_list, columns=['problem', 'vehicles', 'total_cost', 'sota_vehicles', 'sota_cost'])
+            res_df.loc[:, "gap"] = (res_df["total_cost"] - res_df["sota_cost"])/res_df["sota_cost"]
+            res_df.to_csv(res_file_name, index=False)
         print(res_df.head())
     else:
         problem_file = f"/data/songlei/cvrptw/cvrp_benchmarks/homberger_{args.num_nodes}_customer_instances/{args.problem}"
