@@ -200,9 +200,9 @@ def heuristic_improvement(cur_routes, all_customers, truck_capacity, demands, se
     return new_routes, ori_total_cost
 
 def get_problem_dict(nb_customers,
-                    demands, service_time, 
-                    earliest_start, latest_end, max_horizon, 
-                    distance_warehouses, distance_matrix):
+                     demands, service_time, 
+                     earliest_start, latest_end, max_horizon, 
+                     distance_warehouses, distance_matrix):
     distance_matrix_dict = {}
     demands_dict = {}
     service_time_dict = {}
@@ -288,10 +288,10 @@ def generate_init_solution(nb_customers, truck_capacity,
     
     return cur_routes, total_cost, paths_dict, paths_cost_dict, paths_customers_dict
     
-def one_round_heuristics(round, round_res_dict, nb_customers, truck_capacity, demands, service_time,
+def one_round_heuristics(exp_round, round_res_dict, nb_customers, truck_capacity, demands, service_time,
                          earliest_start, latest_end, max_horizon,
                          distance_warehouses, distance_matrix):
-    np.random.seed(round)
+    np.random.seed(exp_round)
     num_episodes = 100000
     early_stop_rounds = 1000
     all_customers, demands_dict, service_time_dict,\
@@ -327,11 +327,11 @@ def one_round_heuristics(round, round_res_dict, nb_customers, truck_capacity, de
                                                        demands_dict, service_time_dict, 
                                                        earliest_start_dict, latest_end_dict,
                                                        distance_matrix_dict)
-        print(f"Round {round}, Fine tune {i}, total cost: {total_cost}")
+        print(f"Round {exp_round}, Fine tune {i}, total cost: {total_cost}")
         cost_list.append(total_cost)
         if len(cost_list) > early_stop_rounds and np.min(cost_list[-early_stop_rounds:]) >= np.min(cost_list[:-early_stop_rounds]):
             break
-    round_res_dict[round] = (total_cost, cur_routes)
+    round_res_dict[exp_round] = (total_cost, cur_routes)
     return
 
 import time
@@ -345,9 +345,9 @@ def main(problem_file, round_res_dict, m_process):
     if m_process:
         num_rounds = 2*mp.cpu_count()
         procs = []
-        for round in range(num_rounds):
-            print("start round ", round)
-            proc = mp.Process(target=one_round_heuristics, args=(round, round_res_dict, nb_customers, truck_capacity, demands, service_time,
+        for exp_round in range(num_rounds):
+            print("start round ", exp_round)
+            proc = mp.Process(target=one_round_heuristics, args=(exp_round, round_res_dict, nb_customers, truck_capacity, demands, service_time,
                                                                 earliest_start, latest_end, max_horizon,
                                                                 distance_warehouses, distance_matrix,))
             procs.append(proc)
