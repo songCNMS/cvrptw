@@ -245,7 +245,7 @@ def generate_init_solution(nb_customers, truck_capacity,
                                                                                         
     # initialize path from tsp
     num_selected_customers = 0
-    for i in range(40):
+    for i in range(20):
         if i == 0: _tsp_solution = tsp_solution[:]
         else:
             idx = np.random.randint(1, nb_customers-1)
@@ -283,7 +283,8 @@ def generate_init_solution(nb_customers, truck_capacity,
                                                paths_dict,
                                                paths_cost_dict,
                                                paths_customers_dict,
-                                               solver_type='PULP_CBC_CMD')
+                                               solver_type='PULP_CBC_CMD',
+                                               binary_model=True)
     
     return cur_routes, total_cost, paths_dict, paths_cost_dict, paths_customers_dict
     
@@ -335,27 +336,33 @@ def one_round_heuristics(round, round_res_dict, nb_customers, truck_capacity, de
 
 import time
 
-def main(problem_file, round_res_dict):
+def main(problem_file, round_res_dict, m_process):
     # dir_name = os.path.dirname(problem_file)
     # file_name = os.path.splitext(os.path.basename(problem_file))[0]
     (nb_customers, nb_trucks, truck_capacity, distance_matrix, distance_warehouses, demands, service_time,
                 earliest_start, latest_end, max_horizon, warehouse_x, warehouse_y, customers_x, customers_y) = read_input_cvrptw(problem_file)
     
-    num_rounds = mp.cpu_count()
-    procs = []
-    for round in range(num_rounds):
-        print("start round ", round)
-        proc = mp.Process(target=one_round_heuristics, args=(round, round_res_dict, nb_customers, truck_capacity, demands, service_time,
-                                                             earliest_start, latest_end, max_horizon,
-                                                             distance_warehouses, distance_matrix,))
-        procs.append(proc)
-        proc.start()
-    for proc in procs:
-        proc.join()
+    if m_process:
+        num_rounds = 2*mp.cpu_count()
+        procs = []
+        for round in range(num_rounds):
+            print("start round ", round)
+            proc = mp.Process(target=one_round_heuristics, args=(round, round_res_dict, nb_customers, truck_capacity, demands, service_time,
+                                                                earliest_start, latest_end, max_horizon,
+                                                                distance_warehouses, distance_matrix,))
+            procs.append(proc)
+            proc.start()
+        for proc in procs:
+            proc.join()
+    else:
+        one_round_heuristics(1, round_res_dict, nb_customers, 
+                             truck_capacity, demands, service_time,
+                             earliest_start, latest_end, max_horizon,
+                             distance_warehouses, distance_matrix)
     round_cost_list = sorted([(round, val[0]) for round, val in round_res_dict.items()], key=lambda x: x[1])
     print(round_cost_list)
     best_round = round_cost_list[0][0]
-    return len(round_res_dict[best_round][1]), round_res_dict[best_round][0]
+    return len(round_res_dict[best_round][1]), round(round_res_dict[best_round][0],2)
     
 
 import multiprocessing as mp
@@ -369,6 +376,7 @@ parser.add_argument("--num_nodes", type=int)
 parser.add_argument("--retrain", action="store_true")
 parser.add_argument("--opt", action="store_true")
 parser.add_argument("--batch", action="store_true")
+parser.add_argument("--mp", action="store_true")
 args = parser.parse_args()
 
 if __name__ == '__main__':
@@ -387,7 +395,7 @@ if __name__ == '__main__':
             if "path" in problem: continue
             print(problem_file)
             problem_name =  str.lower(os.path.splitext(os.path.basename(problem_file))[0])
-            total_path_num, total_cost = main(problem_file, round_res_dict)
+            total_path_num, total_cost = main(problem_file, round_res_dict, args.mp)
             sota = sota_res_dict.get(problem_name, (1, 1))
             result_list.append([problem, total_path_num, total_cost, sota[1], sota[0]])
             res_df = pd.DataFrame(data=result_list, columns=['problem', 'vehicles', 'total_cost', 'sota_vehicles', 'sota_cost'])
@@ -399,5 +407,5 @@ if __name__ == '__main__':
         dir_name = os.path.dirname(problem_file)
         problem_name = str.lower(os.path.splitext(os.path.basename(problem_file))[0])
         sota = sota_res_dict.get(problem_name, (1, 1))
-        total_path_num, total_cost = main(problem_file, round_res_dict)
+        total_path_num, total_cost = main(problem_file, round_res_dict, args.mp)
         print(args.problem, (total_path_num, sota[1]), (total_cost, sota[0]), (total_cost-sota[0])/sota[0])
