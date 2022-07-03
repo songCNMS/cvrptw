@@ -1,17 +1,21 @@
 description: VRPTW
 
 target:
-  service: sing
+  service: amlk8s
+  name: itpwus2cpucl1
+  vc: gcrcpu
   # run "amlt target list amlk8s" to list the names of available AMLK8s targets
-  name: msrresrchvc
-  vc: gcr-singularity-resrch
+  # name: msrresrchvc
+  # vc: gcr-singularity-resrch
 
 environment:
   image: lesongdocker:vrp
   registry: resrchvc4cr.azurecr.io # any public registry can be specified here
   username: resrchvc4cr
   setup:
-    - pip install elkai --user
+    - apt install libffi-dev
+    - pip install pulp
+    - pip install elkai
 
 code:
   # local directory of the code. this will be uploaded to the server.
