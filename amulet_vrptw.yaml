@@ -1,0 +1,42 @@
+description: VRPTW
+
+target:
+  service: sing
+  # run "amlt target list amlk8s" to list the names of available AMLK8s targets
+  name: msrresrchvc
+  vc: gcr-singularity-resrch
+
+environment:
+  image: lesongdocker:vrp
+  registry: resrchvc4cr.azurecr.io # any public registry can be specified here
+  username: resrchvc4cr
+  setup:
+    - pip install elkai --user
+
+code:
+  # local directory of the code. this will be uploaded to the server.
+  # $CONFIG_DIR is expanded to the directory of this config file
+  local_dir: $CONFIG_DIR/
+
+data:
+  local_dir: cvrp_benchmarks/
+  remote_dir: cvrp_benchmarks/
+
+# list of jobs to run, we run 2 jobs in this example
+jobs:
+- name: vrp400
+  sku: C32
+  command:
+  - python cvrptw_heuristic.py --num_nodes 400 --batch --mp --remote
+- name: vrp600
+  sku: C32
+  command:
+  - python cvrptw_heuristic.py --num_nodes 600 --batch --mp --remote
+- name: vrp800
+  sku: C32
+  command:
+  - python cvrptw_heuristic.py --num_nodes 800 --batch --mp --remote
+- name: vrp1000
+  sku: C32
+  command:
+  - python cvrptw_heuristic.py --num_nodes 1000 --batch --mp --remote

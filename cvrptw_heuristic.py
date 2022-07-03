@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 from pulp import *
 import sys
+import os
 import pickle
 from cvrptw import read_input_cvrptw
 from tsp import get_tsp_solution
@@ -343,7 +344,7 @@ def main(problem_file, round_res_dict, m_process):
                 earliest_start, latest_end, max_horizon, warehouse_x, warehouse_y, customers_x, customers_y) = read_input_cvrptw(problem_file)
     
     if m_process:
-        num_rounds = 2*mp.cpu_count()
+        num_rounds = max(64, mp.cpu_count())
         procs = []
         for exp_round in range(num_rounds):
             print("start round ", exp_round)
@@ -368,7 +369,6 @@ def main(problem_file, round_res_dict, m_process):
 import multiprocessing as mp
 from datetime import datetime
 import matplotlib.pyplot as plt
-import os
 import argparse
 parser = argparse.ArgumentParser()
 parser.add_argument("--problem", type=str)
@@ -377,7 +377,15 @@ parser.add_argument("--retrain", action="store_true")
 parser.add_argument("--opt", action="store_true")
 parser.add_argument("--batch", action="store_true")
 parser.add_argument("--mp", action="store_true")
+parser.add_argument("--remote", action="store_true")
 args = parser.parse_args()
+
+if args.remote: 
+    data_dir = os.getenv("AMLT_DATA_DIR", "cvrp_benchmarks")
+    output_dir = os.environ['AMLT_OUTPUT_DIR']
+else:
+    data_dir = "/data/songlei/cvrptw/"
+    output_dir = "/data/songlei/cvrptw/"
 
 if __name__ == '__main__':
     sota_res = pd.read_csv("sota_res.csv")
@@ -386,9 +394,9 @@ if __name__ == '__main__':
     round_res_dict = manager.dict()
     if args.batch:
         result_list = []
-        dir_name = os.path.dirname(f"/data/songlei/cvrptw/cvrp_benchmarks/homberger_{args.num_nodes}_customer_instances/")
+        dir_name = os.path.dirname(f"{data_dir}/cvrp_benchmarks/homberger_{args.num_nodes}_customer_instances/")
         problem_list = os.listdir(dir_name)
-        res_file_name = f"{dir_name}/res_{datetime.now().strftime('%Y%m%d_%H%M')}.csv"
+        res_file_name = f"{output_dir}/res_{args.num_nodes}_{datetime.now().strftime('%Y%m%d_%H%M')}.csv"
         for problem in problem_list:
             problem_file = os.path.join(dir_name, problem)
             if str.lower(os.path.splitext(os.path.basename(problem_file))[1]) != '.txt': continue
@@ -403,7 +411,7 @@ if __name__ == '__main__':
             res_df.to_csv(res_file_name, index=False)
         print(res_df.head())
     else:
-        problem_file = f"/data/songlei/cvrptw/cvrp_benchmarks/homberger_{args.num_nodes}_customer_instances/{args.problem}"
+        problem_file = f"{data_dir}/cvrp_benchmarks/homberger_{args.num_nodes}_customer_instances/{args.problem}"
         dir_name = os.path.dirname(problem_file)
         problem_name = str.lower(os.path.splitext(os.path.basename(problem_file))[0])
         sota = sota_res_dict.get(problem_name, (1, 1))
